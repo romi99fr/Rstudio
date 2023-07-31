@@ -1,0 +1,762 @@
+---
+title: 'Time Series Analysis'
+subtitle: ' 2 .  Structural Decomposition. First Ideas in Forecasting'
+author: "Pedro Delicado. Dept. d'Estadística i Investigació Operativa, UPC"
+date: "January 18th, 2023"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+path.data.0 <- "./series temporales/" #To be replaced by "Time_Series_Datasets/" or the appropriate path directory
+```
+
+# Structural decomposition of a time series
+
+***
+<!--- Reading the same time series as in the first session--->
+```{r, reading}
+path.data <- paste0(path.data.0,"Penya_2010_AnSerTemp/")
+
+# Leguas diarias recorridas por la carabela de Cristobal Colon en su viaje 
+# desde la Isla de la Gomera (Canarias) hasta 
+# la isla de San Salvador en las Antillas (America) en 1492
+colon <- read.table(paste0(path.data,"colon.dat"))
+colon.ts <- ts(colon[,2])
+
+# Stock Market Madrid. Index.
+# Then Returns are defined as the difference of the Index time series.
+Stock.Exch <- read.table(paste0(path.data,"bolsamundo.dat"))
+cities <- c("Paris", "Francfort", "Milan", "Londres", 
+            "New York", "Tokio", "Madrid")
+names(Stock.Exch) <- c("Date",cities)
+year <- Stock.Exch$Date%/%100
+month <- Stock.Exch$Date%%100
+Stock.Exch.ts <- ts(Stock.Exch, start=c(year[1], month[1]), frequency = 12)
+
+# Spanish population aged 16 years old or more
+PopSpain16 <- read.table(paste0(path.data,"pobmay16.dat"))
+names(PopSpain16) <- c("Qarter", "Spanish popul. >16")
+year <- PopSpain16[,1]%/%100
+quarter <- PopSpain16[,1]%%100
+PopSpain16.ts <- ts(PopSpain16[,2], start=c(year[1], quarter[1]), frequency = 4)
+
+# Number of live births in Spain (yearly)
+live.births <- read.table(paste0(path.data,"nacidos.dat"))
+year <- live.births[,1]
+live.births.ts <- ts(live.births[,2],start=year[1])
+
+# Sunspots from 1700 to 1994
+Sunspots.ts <- ts(read.table(paste0(path.data,"sunpot.dat")),start=1700)
+
+# Temperatures (?C) in Santiago de Compostela, from January 1997 to December 2001
+TempSC.ts <- ts(read.table(paste0(path.data,"tempsantiago.dat")),start=c(1997,1),frequency = 12)
+
+# Gasoline compsumption in Spain from January 1945 to December 1999
+Gasoline <- read.table(paste0(path.data,"gasolauto.dat"))
+names(Gasoline) <- c("Date", "Gasoline")
+year <- Gasoline$Date%/%100
+month <- Gasoline$Date%%100
+Gasoline.ts <- ts(Gasoline[,2], start=c(year[1], month[1]), frequency = 12)
+
+# Airline data, RENFE passengers
+# path.data <- "../_Data_sets/Penya_2010_AnSerTemp/"
+airlines <- as.matrix(read.table(paste0(path.data,"airline.dat")))
+airlines.ts <- ts(as.numeric(t(airlines)),start=c(1949,01),frequency = 12)
+
+renfe <- as.matrix(read.table(paste0(path.data,"prenfe.dat")))
+renfe.ts <- ts(as.numeric(t(renfe)),start=c(1971,01),frequency = 12)
+
+path.data <- path.data.0
+RegSocSec <- read.csv2(paste0(path.data,"AfiliadosSegSoc.csv"),header=TRUE)
+RegSocSec.ts <- ts(RegSocSec[,2],frequency=12, start=c(2001,01))
+
+#path.data <- "../_Data_sets/"
+nm <- names(read.csv2(paste0(path.data,"INE_IPI.csv"),
+                      skip=6, header=TRUE, nrows=1))
+end <- min(grep(".1",nm,fixed = TRUE))-1
+nm <- nm[end:2]
+
+IPI <- as.numeric( 
+  t(read.csv2(paste0(path.data,"INE_IPI.csv"), skip=8,
+              dec = "." , header = FALSE,
+              encoding = "UTF-8", row.names = 1, 
+              nrows=1)[1,(end-1):1])
+)
+year <- as.numeric(substr(nm,start=2,stop=5))
+month <- as.numeric(substr(nm,start=7,stop=8))
+tt <- year + month/12
+
+IPI.ts <- ts(IPI, frequency = 12, start=c(year[1],month[1]))
+
+IPIca <- read.csv2(paste0(path.data,"INE_IPI.csv"), skip=7,
+              dec = "." , header = FALSE, as.is=TRUE,
+              encoding = "UTF-8")
+IPIca0 <- IPIca
+
+# "Para Comunidades Aut?nomas no se dispone de datos anteriores al 2002"
+
+yca <- year[year>=2002]
+mca <- month[year>=2002]
+ttca <- yca + mca/12
+nca <- length(yca)
+
+nr <- dim(IPIca)[1]-3 # the last three rows in the file are text
+# nr is 144, nr/8 is 18 (1 Total + 17 ccaa)
+
+ccaa <- IPIca[seq(1,nr,by=8),1]
+#ca <- substr(ccaa,start=4,stop=100)
+#ca[1] <- ccaa[1]
+ca <- c("Total Nacional", "Andalucia", "Aragon", "Asturias", "Balears", "Canarias", "Cantabria", "Cast-Leon", "Cast-La Mancha", "Catalunya", "Com.Valenciana", "Extremadura", "Galicia", "Madrid", "Murcia", "Navarra", "Pais Vasco", "La Rioja")
+
+IPIca <- t(IPIca0[seq(2,nr,by=8),(nca+1):2])
+colnames(IPIca) <- ca
+IPIca.ts <- ts(IPIca, frequency = 12, start=c(yca[1],mca[1]))
+
+path.data <- paste0(path.data.0,"Bike-Sharing-Dataset/")
+day <- read.csv(paste0(path.data,"day.csv"),as.is=TRUE)
+hour <- read.csv(paste0(path.data,"hour.csv"),as.is=TRUE)
+```
+<!--- End of Reading the same time series as in the first session--->
+
+- Many real time series do not seem to be stationary.
+    - Some of them has no constant level: They have a **trend**, that can be linear or not.
+    - Some of them has a **seasonal** pattern.
+- **Classical Structural Modeling**. 
+A classical approach (50's and 60's of the 20th century) to time series analysis is to decompose data into components labeled **trend** ($\mu_t$), **seasonal** ($S_t$), **irregular** or **noise** ($a_t$): 
+\[
+X_t = \mu_t + S_t + a_t.
+\]
+- $a_t$ is usually assumed to be white noise, but it could also be a stationary time series. 
+- This classical approach were overcome when the ARIMA models and the Box-Jenkins methodology appeared (60's and 70's of the 20th century). Now both approaches are used in combination to describe and predict time series. 
+
+***
+
+```{r,fig.asp=.8}
+set.seed(123456)
+ny=8
+T=ny*12
+mut <- ts(.1*(1:T)+3*sin(2*pi*(1:T)/T), frequency = 12)
+aux <- .5*cumsum(rnorm(12))
+S1 <- aux-mean(aux)
+St <- ts(rep(S1,ny), frequency = 12)
+wt <- ts(.25*rnorm(T), frequency = 12)
+
+Xt <- mut + St + wt
+
+plot(Xt,ylim=c(-2,ny*1.5))
+lines(mut,col=4)
+lines(St,col=2)
+lines(wt,col=6)
+lines(Xt,lwd=2)
+legend("topleft",c("Time series", "Trend", "Seasonality", "Noise"),col=c(1,4,2,6),lwd=c(2,1,1,1))
+
+```
+
+
+## Estimating the components of a time series
+
+### Estimating the **trend** in $X_t=\mu_t + a_t$.
+
+- **Deterministic trend models:** 
+    - A parametric model  $\mu_t=f(t,\boldsymbol{\beta})$, $\boldsymbol{\beta}\in \mathbb{R}^p$ is assumed.
+    - Parameter $\boldsymbol{\beta}$ is estimated by Least Squares:
+    \[
+    \min_{\boldsymbol{\beta}} \sum_{t=1}^T (X_t-f(t,\boldsymbol{\beta}))^2.
+    \]
+    - For instance, a **linear trend** is modeled as 
+    $f(t,\beta_0,\beta_1)=\beta_0 + \beta_1 t$, with $\beta_0$ and $\beta_1$ in $\mathbb{R}$, and it is estimated as a simple regression of $X_t$ as a function of $t$:
+    \[
+    \min_{\beta_0,\beta_1} \sum_{t=1}^T (X_t - \beta_0 - \beta_1 t)^2.
+    \]
+    
+***
+
+- **Exponential smoothing:**
+    - The estimated level at time $t$ is a weighted average of past observations, where weights are decreasing exponentially with time:
+\[ 
+\hat{\mu}_{t} = (1-\alpha) \sum_{k\ge 0} \alpha^k X_{t-1-k}, \,  |\alpha|<1.
+\] 
+    - Observe that $\sum_{k\ge 0} \alpha^k= \frac{1}{1-\alpha}$ when $|\alpha|<1$. 
+    - Parameter $\alpha$ is estimated by Least Squares:
+    \[
+    \min_{\alpha\in(-1,1)} \sum_{t=1}^T 
+    \left(X_t- \frac{1-\alpha}{1-\alpha^t} 
+    \sum_{k=0}^{t-1} \alpha^k X_{t-1-k}
+    \right)^2.
+    \]
+    - Observe that $\sum_{k=0}^{t-1} \alpha^k= \frac{1-\alpha^t}{1-\alpha}$ for all $\alpha$. 
+ 
+*** 
+
+- Observe that
+\[ 
+\hat{\mu}_{t+1} 
+= (1-\alpha) \sum_{k\ge 0} \alpha^k X_{t-k}
+\]
+\[
+= (1-\alpha)X_t +  \alpha (1-\alpha)\sum_{k\ge 0} \alpha^k X_{t-1-k}
+\]
+\[
+= (1-\alpha)X_t + \alpha \hat{\mu}_t
+= X_t - \alpha(X_t-\hat{\mu}_t)
+\] 
+\[
+\Rightarrow (X_{t+1} -\hat{\mu}_{t+1})= (X_{t+1} - X_t) + 
+\alpha (X_t-\hat{\mu}_t)
+\]
+\[
+\Rightarrow X_{t+1} = X_t + \hat{w}_{t+1} - \alpha \hat{w}_t
+\]
+
+- This is the estimated version of a Random Walk with a stationary noise that is not white noise: $a_t=w_t - \alpha w_{t-1}$, $w_t$ being white noise: 
+$X_{t+1} = X_t + w_{t+1} - \alpha w_t$. 
+- Exponential smoothing is optimal for these models.
+
+
+## Exponential smoothing. Exemple: Difference of Live Births in Spain. 
+
+
+```{r}
+path.data <- paste0(path.data.0,"Penya_2010_AnSerTemp/")
+# Number of live births in Spain (yearly)
+live.births <- read.table(paste0(path.data,"nacidos.dat"))
+year <- live.births[,1]
+live.births.ts <- ts(live.births[,2],start=year[1])
+
+Series <- diff(live.births.ts)
+T <- length(Series)
+#alpha.v <- seq(0,.9,by=.1)
+alpha.v <- seq(0.6,.8,by=.01)
+SSR <- 0*alpha.v
+for (i in 1:length(alpha.v)){
+  alpha <- alpha.v[i]
+  pred.Series <- sapply(2:T,function(j){
+    (1-alpha)*sum(alpha^(0:(j-2))*Series[(j-1):1])/
+      (1-alpha^(j-1))
+  })
+  pred.Series <- ts(c(Series[1], pred.Series),
+                  frequency = frequency(Series),
+                  start=start(Series))
+  SSR[i] <- sum( (Series-pred.Series)^2 )
+}
+i.star <- which.min(SSR)
+alpha.star <- alpha <- alpha.v[i.star]
+pred.Series <- sapply(2:T,function(j){
+    (1-alpha)*sum(alpha^(0:(j-2))*Series[(j-1):1])/
+      (1-alpha^(j-1))
+  })
+pred.Series <- ts(c(Series[1], pred.Series),
+                  frequency = frequency(Series),
+                  start=start(Series))
+plot(Series, main=paste("alpha.star=",alpha.star))
+lines(pred.Series,col=2)
+```
+
+***
+
+```{r,echo=TRUE}
+library(astsa)
+mu.t <- HoltWinters(diff(live.births.ts),
+                    beta=FALSE,gamma=FALSE)
+print(mu.t) # our alpha is denoted by (1-alpha) here!
+```
+
+*** 
+
+```{r,echo=TRUE}
+plot(mu.t)
+```
+
+## Nonparametric smoothing
+
+- **Moving averages:** 
+$\hat{\mu}_t = \frac{1}{2k+1} \sum_{j=-k}^k X_{t+j}$.
+    - $k$ is a tuning parameter to be chosen by, for example, leave-one-out cross-validation.
+- **Kernel smoothing:** Let $K(u)$ be the standard Gaussian density function, and $b>0$,
+\[
+\hat{\mu}_t^b = 
+\frac{\sum_{j=-\infty}^{\infty} K(j/b) X_{t+j}}
+{\sum_{j=-\infty}^{\infty} K(j/b)}. 
+\]
+$\hat{\mu}_t^b$ is a weighted average of neighbor observations.
+    - $b$ is a tuning parameter to be chosen by, for example, leave-one-out cross-validation.
+- Sophistications: 
+    - Fitting a local linear regression model around $t$, depending on $(t+k)$, $k$ around $0$.
+    - Fitting a local linear regression model around $t$, depending only on the past observations.
+
+***
+
+```{r}
+tt <- 1:length(live.births.ts)
+plot(tt,live.births.ts,type="l", main="Smoothing using loess")
+lines(predict(loess(live.births.ts~tt)),col=2)
+```
+
+***
+
+```{r}
+tt <- 1:length(diff(live.births.ts))
+plot(tt,diff(live.births.ts),type="l", main="Smoothing using loess")
+lines(predict(loess(diff(live.births.ts)~tt)),col=2)
+```
+
+## Estimation of the seasonal component (monthly frequency)
+
+- Estimate the trend with one of the methods described before and define $E_t = X_t - \hat{\mu}_t$.
+
+- For each month $j=1,\ldots,12$, the seasonal component
+is estimated as 
+\[
+\hat{S}_j= \bar{E}_j - \bar{E},
+\]
+where $\bar{E}_j$ is the average of all the the values $E_t$ corresponding to month $j$ (that is, $t=12i+j\,$),
+and $\bar{E}$ is the average of all the values $E_t$. 
+- For time $t=12i+j$, $\hat{S}_t=\hat{S}_j$.
+
+***
+
+- The irregular component $a_t$ is estimated as
+\[
+\hat{a}_{t}=E_{t}-\hat{S}_t.
+\]
+- Then $X_t=\hat{\mu}_t + \hat{S}_t + \hat{a}_{t}$.
+
+***
+
+```{r}
+# IPI: Spanish Industrial Production Index
+path.data <- path.data.0
+nm <- names(read.csv2(paste0(path.data,"INE_IPI.csv"),
+                      skip=6, header=TRUE, nrows=1))
+end <- min(grep(".1",nm,fixed = TRUE))-1
+nm <- nm[end:2]
+
+IPI <- as.numeric( 
+  t(read.csv2(paste0(path.data,"INE_IPI.csv"), skip=8,
+              dec = "." , header = FALSE,
+              encoding = "UTF-8", row.names = 1, 
+              nrows=1)[1,(end-1):1])
+)
+year <- as.numeric(substr(nm,start=2,stop=5))
+month <- as.numeric(substr(nm,start=7,stop=8))
+tt <- year + month/12
+
+IPI.ts <- ts(IPI, frequency = 12, start=c(year[1],month[1]))
+IPI.HW <- HoltWinters(IPI.ts, beta=FALSE)
+plot(IPI.HW)
+```
+
+***
+
+```{r,fig.asp=.8}
+plot(IPI.HW$fitted)
+```
+
+***
+
+- Other functions allowing to decompose a time series into its seasonal, trend and noise components are
+`decompose()` and `stl()`, from the default library `stats`.
+- In the case of `decompose()` decomposition is carried out by means of an adjustment of moving averages (a symmetric window with equal weights is used).
+- `stl()` performs the decomposition by means of a local polynomial adjustment using the function `loess`.
+
+***
+
+```{r,fig.asp=.8}
+IPI.dec <- decompose(IPI.ts)
+plot(IPI.dec)
+title(sub="Using decompose()")
+```
+
+***
+
+```{r,fig.asp=.8}
+IPI.stl <- stl(IPI.ts, s.window = "periodic")
+plot(IPI.stl)
+title(sub="Using stl()")
+```
+
+***
+
+```{r}
+op<-par(mfrow=c(1,2))
+barplot(IPI.dec$figure, main="Seasonal comp., by decompose()")
+barplot(IPI.stl$time.series[1:12,1], main="Seasonal component, by stl()")
+par(op)
+```
+
+# Forecasting: First ideas
+
+***
+
+## Forecasting: First ideas
+
+- Let $X_1,\ldots,X_T, X_{T+1}, \ldots X_{T+k}$ be the $(T+k)$ random variables that conform a time series with values at $(T+k)$ consecutive times.
+- Assume that the series is observed from time $t=1$ to time $t=T$, so we assume that $X_1,\ldots,X_T$ are known values.
+- **Forecasting 1 step ahead:** We want to predict (or forecast) the value of the time series *tomorrow*, that is at time $T+1$. Which value should we forecast for $X_{T+1}$?
+ - **Forecasting $k$ step ahead:** We want to predict (or forecast) the value of the time series at time $T+k$ from instant $T$. Which value should we forecast for $X_{T+k}$?
+
+***
+
+## Forecasting 1 step ahead
+
+- Let $a$ be a potential forecast for the random variable $X_{T+1}$, conditional on our knowledge until time $T$, that is, $X_1,\ldots,X_T$. 
+- We evaluate the forecasting ability of $a$ by the **Mean Square Prediction Error (MSPE)** conditional to $X_1,\ldots,X_T$, defined as
+\[
+\text{MSPE}_{X_{T+1|T}}(a) = E[(X_{T+1}-a)^2|X_1,\ldots,X_T].
+\]
+- It is easy to prove that the value $a$ minimizing $\text{MSPE}_{X_{T+1}}(a)$ is the conditional expectation of $X_{T+1}$, given $X_1,\ldots,X_T$:
+\[
+\hat{X}_{T+1|T}= E[X_{T+1}|X_1,\ldots,X_T].
+\]
+
+
+## Forecasting $k$ steps ahead
+
+- Forecasting $1$ steps ahead: $\hat{X}_{T+1|T}= E[X_{T+1}|X_1,\ldots,X_T]$.
+- Forecasting $k$ steps ahead: $\hat{X}_{T+k|T}= E[X_{T+k}|X_1,\ldots,X_T]$, $k\ge 1$.
+- The computation of these conditional expectations requires a previous modelization of the joint distribution of $(X_1,\ldots,X_T,X_{T+1},\ldots,X_{T+k})$.
+- ARIMA models are an effective way to model it. 
+- We will study these models later.
+
+
+***
+
+### Forecasting based on a naive rule
+
+- *Naive forecasting: Last observed value,* $\hat{X}_{T+k|T}=X_T$, $k\ge 1$. 
+
+- IPI annual rate of growth: 
+\newline
+IPI.arg$_t$= 100(IPI$_t$ - IPI$_{t-12}$)/IPI$_{t-12}$.
+
+```{r,fig.asp=.6}
+IPI.arg = 100 * diff(IPI.ts,lag = 12)/lag(IPI.ts,k=-12) 
+op<-par(mfrow=c(1,2))
+plot(ts.union(IPI.ts,IPI.arg))
+par(op)
+```
+
+***
+
+```{r}
+forecast.naive <- function(X.ts, steps.ahead=1, 
+                        end.train=NULL){
+  if (is.null(end.train)){
+    if (length(end(X.ts))==1){
+      end.train <- end(X.ts)-2*max(steps.ahead)
+    }else{
+      ny.ahead <- max(steps.ahead)%/%frequency(X.ts)+1
+      end.train <- c(end(X.ts)[1]-ny.ahead-1,12)
+    }
+  }else{
+    if (length(end(X.ts))==1){
+      start.train <- max(steps.ahead)+1
+      start.frcst <- end.train+1
+    }else{
+      ny.ahead <- max(steps.ahead)%/%frequency(X.ts)+1
+      start.train <- c(start(X.ts)[1]+ny.ahead+1,1)
+      start.frcst <- c(end.train[1]+(end.train[2]==frequency(X.ts)),
+                       (end.train[2]%%frequency(X.ts))+1)
+    }
+  }
+  end.frcst <- end(X.ts)
+  
+  #
+  nsh <- length(steps.ahead)
+  me.tr <- numeric(nsh)
+  mspe.tr <- numeric(nsh)
+  frcst <- vector("list", length=nsh)
+  for (i in (1:nsh)){
+    sh <- steps.ahead[i]
+    error <- diff(X.ts,lag=sh)
+    e.train <- window(error,start=start.train, end=end.train)
+    me.tr[i] <- mean(e.train,narm=TRUE)
+    mspe.tr[i] <- mean(e.train^2,narm=TRUE)
+    frcst[[i]] <- window(lag(X.ts,k=-sh),start=start.frcst, end=end.frcst)
+  }
+  sde.tr <- sqrt(mspe.tr)
+  ts.end.train <- window(X.ts,start=end.train,end=end.train)
+  
+  return(list(
+    steps.ahead=steps.ahead,
+    me.tr=me.tr,
+    mspe.tr=mspe.tr,
+    sde.tr=sde.tr,
+    frcst=frcst,
+    ts.end.train=ts.end.train
+  ))
+}
+```
+
+```{r}
+plot(IPI.arg,main="Naive forecasting from 2012-12, 2016-12 and 2019-12")
+
+# Forecasting from 2012-12
+end.train <- c(2012,12)
+# steps.ahead <- c(1:5,12)
+steps.ahead <- c(1:12,18,24)
+aux <- forecast.naive(IPI.arg,
+                      steps.ahead = steps.ahead, 
+                      end.train = end.train)
+
+frcst <- numeric(length(steps.ahead))
+for (i in 1:length(aux$steps.ahead)){
+  frcst[i] <- aux$frcst[[i]][aux$steps.ahead[i]]
+}
+frcst <- as.numeric(frcst)
+abline(v=time(aux$ts.end.train),lty=2,col=8)
+lines(c(time(aux$ts.end.train), time(aux$frcst[[1]])[aux$steps.ahead]),
+      c(as.numeric(aux$ts.end.train), frcst),col=2)
+points(time(aux$frcst[[1]])[aux$steps.ahead],frcst,col=2,pch=19)
+lines(c(time(aux$ts.end.train), time(aux$frcst[[1]])[aux$steps.ahead]),
+      c(as.numeric(aux$ts.end.train),frcst)+2*c(0,aux$sde.tr),col=4,lty=2,lwd=2)
+lines(c(time(aux$ts.end.train), time(aux$frcst[[1]])[aux$steps.ahead]),
+      c(as.numeric(aux$ts.end.train),frcst)-2*c(0,aux$sde.tr),col=4,lty=2,lwd=2)
+
+
+# Forecasting from 2016-12
+end.train <- c(2016,12)
+aux <- forecast.naive(IPI.arg,
+                      steps.ahead = steps.ahead, 
+                      end.train = end.train)
+
+for (i in 1:length(aux$steps.ahead)){
+  frcst[i] <- aux$frcst[[i]][aux$steps.ahead[i]]
+}
+frcst <- as.numeric(frcst)
+abline(v=time(aux$ts.end.train),lty=2,col=8)
+lines(c(time(aux$ts.end.train), time(aux$frcst[[1]])[aux$steps.ahead]),
+      c(as.numeric(aux$ts.end.train), frcst),col=2)
+points(time(aux$frcst[[1]])[aux$steps.ahead],frcst,col=2,pch=19)
+lines(c(time(aux$ts.end.train), time(aux$frcst[[1]])[aux$steps.ahead]),
+      c(as.numeric(aux$ts.end.train),frcst)+2*c(0,aux$sde.tr),col=4,lty=2, lwd=2)
+lines(c(time(aux$ts.end.train), time(aux$frcst[[1]])[aux$steps.ahead]),
+      c(as.numeric(aux$ts.end.train),frcst)-2*c(0,aux$sde.tr),col=4,lty=2, lwd=2)
+
+# Forecasting from 2019-12
+end.train <- c(2019,12)
+aux <- forecast.naive(IPI.arg,
+                      steps.ahead = steps.ahead, 
+                      end.train = end.train)
+
+for (i in 1:length(aux$steps.ahead)){
+  frcst[i] <- aux$frcst[[i]][aux$steps.ahead[i]]
+}
+frcst <- as.numeric(frcst)
+abline(v=time(aux$ts.end.train),lty=2,col=8)
+lines(c(time(aux$ts.end.train), time(aux$frcst[[1]])[aux$steps.ahead]),
+      c(as.numeric(aux$ts.end.train), frcst),col=2)
+points(time(aux$frcst[[1]])[aux$steps.ahead],frcst,col=2,pch=19)
+lines(c(time(aux$ts.end.train), time(aux$frcst[[1]])[aux$steps.ahead]),
+      c(as.numeric(aux$ts.end.train),frcst)+2*c(0,aux$sde.tr),col=4,lty=2, lwd=2)
+lines(c(time(aux$ts.end.train), time(aux$frcst[[1]])[aux$steps.ahead]),
+      c(as.numeric(aux$ts.end.train),frcst)-2*c(0,aux$sde.tr),col=4,lty=2, lwd=2)
+``` 
+
+Forecasting 95\% confidence interval: 
+\[
+(\hat{X}_{T+k|T} \mp 2 \widehat{\text{Std.error}}(\hat{X}_{T+k|T}))
+\]
+
+***
+
+```{r}
+plot(window(IPI.arg,start=c(2011,1),end=end(IPI.arg)),
+     ylim=c(-35,50), ylab="IPI.arg",
+     main="Naive forecasting from 2012-12, 2016-12 and 2019-12 (zoom)")
+
+# Forecasting from 2012-12
+end.train <- c(2012,12)
+steps.ahead <- c(1:12,18,24)
+aux <- forecast.naive(IPI.arg,
+                      steps.ahead = steps.ahead, 
+                      end.train = end.train)
+
+frcst <- numeric(length(steps.ahead))
+for (i in 1:length(aux$steps.ahead)){
+  frcst[i] <- aux$frcst[[i]][aux$steps.ahead[i]]
+}
+frcst <- as.numeric(frcst)
+abline(v=time(aux$ts.end.train),lty=2,col=8)
+lines(c(time(aux$ts.end.train), time(aux$frcst[[1]])[aux$steps.ahead]),
+      c(as.numeric(aux$ts.end.train), frcst),col=2)
+points(time(aux$frcst[[1]])[aux$steps.ahead],frcst,col=2,pch=19)
+lines(c(time(aux$ts.end.train), time(aux$frcst[[1]])[aux$steps.ahead]),
+      c(as.numeric(aux$ts.end.train),frcst)+2*c(0,aux$sde.tr),col=4,lty=2,lwd=2)
+lines(c(time(aux$ts.end.train), time(aux$frcst[[1]])[aux$steps.ahead]),
+      c(as.numeric(aux$ts.end.train),frcst)-2*c(0,aux$sde.tr),col=4,lty=2,lwd=2)
+
+
+# Forecasting from 2016-12
+end.train <- c(2016,12)
+steps.ahead <- c(1:12,18, 24)
+aux <- forecast.naive(IPI.arg,
+                      steps.ahead = steps.ahead, 
+                      end.train = end.train)
+
+frcst <- numeric(length(steps.ahead))
+for (i in 1:length(aux$steps.ahead)){
+  frcst[i] <- aux$frcst[[i]][aux$steps.ahead[i]]
+}
+frcst <- as.numeric(frcst)
+abline(v=time(aux$ts.end.train),lty=2,col=8)
+lines(c(time(aux$ts.end.train), time(aux$frcst[[1]])[aux$steps.ahead]),
+      c(as.numeric(aux$ts.end.train), frcst),col=2)
+points(time(aux$frcst[[1]])[aux$steps.ahead],frcst,col=2,pch=19)
+lines(c(time(aux$ts.end.train), time(aux$frcst[[1]])[aux$steps.ahead]),
+      c(as.numeric(aux$ts.end.train),frcst)+2*c(0,aux$sde.tr),col=4,lty=2, lwd=2)
+lines(c(time(aux$ts.end.train), time(aux$frcst[[1]])[aux$steps.ahead]),
+      c(as.numeric(aux$ts.end.train),frcst)-2*c(0,aux$sde.tr),col=4,lty=2, lwd=2)
+
+# Forecasting from 2019-12
+end.train <- c(2019,12)
+steps.ahead <- c(1:12,18, 24)
+aux <- forecast.naive(IPI.arg,
+                      steps.ahead = steps.ahead, 
+                      end.train = end.train)
+
+frcst <- numeric(length(steps.ahead))
+for (i in 1:length(aux$steps.ahead)){
+  frcst[i] <- aux$frcst[[i]][aux$steps.ahead[i]]
+}
+frcst <- as.numeric(frcst)
+abline(v=time(aux$ts.end.train),lty=2,col=8)
+lines(c(time(aux$ts.end.train), time(aux$frcst[[1]])[aux$steps.ahead]),
+      c(as.numeric(aux$ts.end.train), frcst),col=2)
+points(time(aux$frcst[[1]])[aux$steps.ahead],frcst,col=2,pch=19)
+lines(c(time(aux$ts.end.train), time(aux$frcst[[1]])[aux$steps.ahead]),
+      c(as.numeric(aux$ts.end.train),frcst)+2*c(0,aux$sde.tr),col=4,lty=2, lwd=2)
+lines(c(time(aux$ts.end.train), time(aux$frcst[[1]])[aux$steps.ahead]),
+      c(as.numeric(aux$ts.end.train),frcst)-2*c(0,aux$sde.tr),col=4,lty=2, lwd=2)
+``` 
+
+\[
+\widehat{\text{Std.error}}(\hat{X}_{T+k|T})=\sqrt{
+\frac{1}{T-k} \sum_{t=1}^{T-k} (\hat{X}_{t+k|t} - X_{t+k})^2}
+\]
+
+## Forecasting based on structural decomposition
+
+- For the moment, assume that we have decomposed (additively) the time series $X_t$ in its structural components:
+\[
+X_t = \hat{\mu}_t + \hat{S}_t + \hat{a}_t, \, t=1,\ldots,T.
+\]
+- Then the prediction $k$ steps ahead should be
+\[
+\hat{X}_{T+k|T} = \hat{\mu}_{T+k|T} + \hat{S}_{T+k|T} + \hat{a}_{T+k|T}, 
+\]
+where $\hat{\mu}_{T+k|T}$, $\hat{S}_{T+k|T}$ and $\hat{a}_{T+k|T}$ are, respectively, the predictions
+of the level, the seasonal component, and the irregular component for time $T+k$ done at time $T$.
+
+***
+
+- $\hat{X}_{T+k|T} = \hat{\mu}_{T+k|T} + \hat{S}_{T+k|T} + \hat{a}_{T+k|T}$. 
+- For monthly data, $\hat{S}_{T+k|T}= \hat{S}_j$ if $T+k=12 i + j$.
+- If the irregular component $a_t$ is white noise, then $\hat{a}_{T+k|T}=E(a_{T+k})=0$.
+- If $a_t$ is stationary, we can use ARMA models to compute $\hat{a}_{T+k|T}$ (we will see that later).
+
+***
+
+### Prediction of the level component $\hat{\mu}_{T+k|T}$
+
+- When the level has been estimated by a parametric model, $\hat{\mu}_t=f(t,\boldsymbol{\hat{\beta}})$,
+    \[
+    \hat{\mu}_{T+k|T}=f(T+k,\boldsymbol{\hat{\beta}}).
+    \]
+    Observe that the estimation $\boldsymbol{\hat{\beta}}$ for the parameter $\boldsymbol{\beta}$ has been computed from the available data $X_1,\ldots,X_T$.
+
+***
+
+### Prediction of the level component $\hat{\mu}_{T+k|T}$
+
+- When the level has been estimated by moving averages (`decompose()`) or by a non-parametric regression (`stl()`, that uses `loess`): 
+    - These procedures must be extrapolated outside the range $[1,T]$ which the predictor variable $t$ in pairs $(t,X_t)$, $t=1,\ldots,T$, belongs to.
+    - Extrapolation is usually dangerous! 
+    
+***
+
+```{r}
+#end.train <- c(2016,12)
+end.train <- c(2019,12)
+time.IPI <- time(IPI.arg)
+IPI.arg.df <- as.data.frame( ts.union(time.IPI,IPI.arg) )
+span <- .1
+loess.IPI <- loess(IPI.arg ~ time.IPI, span=span,
+                  data=IPI.arg.df,
+                  subset=(time.IPI<=sum(end.train*c(1,1/12))-1/12),
+                  control = loess.control(surface = "direct"))
+
+frcst.loess.IPI <- predict(loess.IPI, se=TRUE, 
+                           newdata = IPI.arg.df[IPI.arg.df$time.IPI>=sum(end.train*c(1,1/12)),1])
+
+plot(IPI.arg,col=8,main=paste0("Loess forecasting from 2019-12, span=",span))
+lines(loess.IPI$x,loess.IPI$fitted, col=1,lwd=2)
+abline(v=max(loess.IPI$x),lty=2,col=6)
+lines(IPI.arg.df[IPI.arg.df$time.IPI>=sum(end.train*c(1,1/12)),1],
+      frcst.loess.IPI$fit,col=2,lwd=2)
+lines(IPI.arg.df[IPI.arg.df$time.IPI>=sum(end.train*c(1,1/12)),1],
+      frcst.loess.IPI$fit+2*frcst.loess.IPI$se.fit,col=4,lty=2,lwd=2)
+lines(IPI.arg.df[IPI.arg.df$time.IPI>=sum(end.train*c(1,1/12)),1],
+      frcst.loess.IPI$fit-2*frcst.loess.IPI$se.fit,col=4,lty=2,lwd=2)
+```
+
+***
+
+```{r}
+acf(ts(loess.IPI$residuals,frequency = 12,end=end.train),lag.max = 48,main="ACF for the residuals of loess fit")
+```
+
+***
+
+### Prediction of the level component $\hat{\mu}_{T+k|T}$
+    
+- When *exponential smoothing* has been used.
+- Remember that $\hat{\mu}_{t+1} 
+= (1-\alpha) \sum_{k\ge 0} \alpha^k X_{t-k}
+= X_t - \alpha(X_t-\hat{\mu}_t)$.
+- Using $X_1,\ldots,X_T$, parameter $\alpha$ is estimated by least squares. The values $\hat{\mu}_t$, $t\le T$, are also estimated.
+- *Forecasting:* (assuming that $a_t$ is white noise)
+    - $\hat{\mu}_{T+1|T} = X_T - \hat{\alpha}(X_T-\hat{\mu}_T)$
+    - $\hat{X}_{T+1|T} = \hat{\mu}_{T+1|T} + \hat{S}_{T+1|T}$
+    - $\hat{\mu}_{T+2|T} = \hat{X}_{T+1|T} - \hat{\alpha}(\hat{X}_{T+1|T}-\hat{\mu}_{T+1|T})$
+    - $\hat{X}_{T+2|T} = \hat{\mu}_{T+2|T} + \hat{S}_{T+2|T}$
+    - $\cdots$
+
+
+***
+
+```{r}
+library(astsa)
+#end.train <- c(2016,12)
+end.train <- c(2019,12)
+HW.IPI.arg <- HoltWinters(window(IPI.arg,end=end.train), 
+                                 beta=FALSE, gamma=FALSE)
+frcst.WP.IPI.arg <- predict(HW.IPI.arg,n.ahead=36, prediction.interval = TRUE)
+plot(IPI.arg,col=8,main="Exponential smoothing forecasting, with no seasonal component")
+lines(HW.IPI.arg$fitted[,1],lwd=2)
+abline(v=max(loess.IPI$x),lty=2,col=6)
+lines(frcst.WP.IPI.arg[,1],col=2,lwd=2)
+lines(frcst.WP.IPI.arg[,2],col=4,lty=2,lwd=2)
+lines(frcst.WP.IPI.arg[,3],col=4,lty=2,lwd=2)
+```
+
+***
+
+Using directly the function `plot.HoltWinters`
+```{r}
+plot(HW.IPI.arg,predicted.values = frcst.WP.IPI.arg, xlim=range(time(IPI.arg)), ylim=c(-35,50))
+lines(window(IPI.arg, start=c(2020,1)),col=8)
+```
+
+***
+
+Using function `forecast.HoltWinters`, from package `forecast`. 
+
+```{r,warning=FALSE, message=FALSE}
+library(forecast)
+plot(forecast(HW.IPI.arg,h=36), ylim=c(-35,50), xlim=range(time(IPI.arg)))
+lines(window(IPI.arg, start=c(2020,1)),col=2)
+```
+The 80% confidence band for predictions is ploted (dark grey), in addition to the usual 95% confidence band (light grey).

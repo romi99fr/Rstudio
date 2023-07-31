@@ -1,0 +1,163 @@
+---
+title: "TimeSeries4"
+author: "Joan-Joel"
+date: "2023-02-15"
+output: html_document
+---
+
+load("./AccidSunday.Rdata")
+
+#Problem 1
+plot(deaths.Sunday.ts, type = 'l')
+acf(deaths.Sunday.ts)
+pacf(deaths.Sunday.ts)
+
+#Problem 2
+absfreq <- tabulate(deaths.Sunday.ts+1) #+1 to include 0
+Tlen <- length(deaths.Sunday.ts)
+maxval <- max(deaths.Sunday.ts)
+plot(0:maxval, absfreq/Tlen, type="h", xlab = "k", ylab = expression(paste("estimated P(X"[t],"=k)")), lwd=4, ylim=c(0,0.3))
+abline(h=0,col=8)
+
+#Problema 3
+mn <- mean(deaths.Sunday.ts)
+mn
+varc <- var(deaths.Sunday.ts)
+varc
+
+rho1 <- acf(deaths.Sunday.ts, plot=FALSE)[[1]][2]
+rho1
+mue <- mn*(1-rho1)
+mue
+
+se <- (1-rho1^2)*varc-rho1*mue
+se
+
+#Problema 4
+ID <- (Tlen-1)/Tlen*varc/mn
+ID
+
+sdID <- sqrt(2/Tlen*(1+rho1^2)/(1-rho1^2))
+ID + -1/Tlen*(1+rho1)/(1-rho1) + c(-1,1)*qnorm(0.975)*sdID
+
+#If 1 does not belong to this interval then we can reject the null hypothesis of equidispersion. 
+
+#Problem 5.1
+tppois <- function(k,l,lambda,alpha){
+tp <- 0
+for(j in c(0:min(k,l))){
+  tp <- tp + dbinom(j,l,alpha)*dpois(k-j,lambda)
+}
+tp
+}
+
+llpinar1 <- function(par,data){
+T <- length(data)
+value <- -log(dpois(data[1], par[1]/(1-par[2]))) #full likelihood, otherwise use 0 here
+
+for(t in c(2:T)) {
+  value <- value-log(tppois(data[t], data[t-1], par[1], par[2]))
+}
+value
+}
+
+estml <- suppressWarnings(optim(c(mue,rho1), llpinar1, method="L-BFGS-B", lower=c(0.0001,0.0001), upper=c(9999,0.9999), control=list(ndeps=c(1e-4,1e-4)), data=deaths.Sunday.ts, hessian=TRUE))
+lambdaestml <- estml$par[[1]]
+alphaestml <- estml$par[[2]]
+ofiest <- estml$hessian #inverse covariance
+neglmax <- estml$value
+estcov <- solve(ofiest)
+
+
+#Problem 5.2
+estimate <- c(lambdaestml,alphaestml)
+estimate
+#Problem 5.3
+muestml <- lambdaestml/(1-alphaestml)
+muestml
+
+#Problem 6
+plot(0:maxval,absfreq/Tlen, type="h", xlab = "k", ylab = expression(paste("P(X"[t],")")), lwd=4, ylim=c(0,0.35))
+points((0:maxval)+.25,dpois(0:maxval,lambda =muestml ), type="h", lwd=4, col=gray(0.5))
+abline(h=0,col=8)
+legend("topright",c("Observed frequencies","Estimated marginal distribution"), col=c(1,8),lwd=4,lty=1)
+
+#Problem 7
+cMeanP <- function(l,lambda,alpha){
+  alpha*l+lambda
+}
+
+cVarP <- function(l,lambda,alpha){
+  alpha*(1-alpha)*l+lambda
+}
+
+
+res <- (deaths.Sunday.ts[2:Tlen]-cMeanP(deaths.Sunday.ts[1:(Tlen-1)], lambdaestml,alphaestml)) / sqrt(cVarP(deaths.Sunday.ts[1:(Tlen-1)], lambdaestml,alphaestml))
+
+
+par(mar=c(3, 3, 0.5, 0.5), mgp=c(1.8, 0.6, 0))
+par(mfrow=c(2,1))
+plot(deaths.Sunday.ts, type="l", xlab = "t", ylab = expression("Download counts  x "[t]), cex.axis=0.85)
+points(deaths.Sunday.ts, pch=19, cex=0.5)
+lines(cMeanP(deaths.Sunday.ts[1:(Tlen-1)], lambdaestml,alphaestml),col=4,lwd=2)
+legend("topleft",c("Raw data","Fitted values"),col=c(1,4),lwd=c(1,2),pch=c(19,NA),cex=.75)
+
+plot(res,type='l', ylab = "Pearson residuals")
+abline(h=0,col=8)
+
+#Problem 8
+#acf,pacf
+op<-par(mfrow=c(1,2))
+acf(res)
+pacf(res)
+par(op)
+
+#PIT
+allcdfs <- array(0, c(maxval+2,maxval+1)) #additional zero row corresponding to F(-1)
+
+for(l in c(0:maxval)){
+  cpmf <- rep(0, (maxval+1))
+  for(k in c(0:maxval)){
+    cpmf[k+1] <- tppois(k,l,lambdaestml,alphaestml)
+  }
+  allcdfs[(2:(maxval+2)),l+1] <- cumsum(cpmf)
+}
+
+nobins <- 10
+PIT <- array(0, c(2,nobins+1))
+
+for(j in c(1:nobins)){
+  u <- j/nobins
+  pitval <- 0
+  
+  for(t in c(2:Tlen)){
+    if(allcdfs[(deaths.Sunday.ts[t]+1), (deaths.Sunday.ts[t-1]+1)]<u){
+      if(allcdfs[(deaths.Sunday.ts[t]+2), (deaths.Sunday.ts[t-1]+1)]<u){
+        pitval <- pitval+1
+      }else{
+        pitval <- pitval+ (u-allcdfs[(deaths.Sunday.ts[t]+1), (deaths.Sunday.ts[t-1]+1)])/(allcdfs[(deaths.Sunday.ts[t]+2), (deaths.Sunday.ts[t-1]+1)]-allcdfs[(deaths.Sunday.ts[t]+1), (deaths.Sunday.ts[t-1]+1)])
+      }
+    }
+  }
+  PIT[1,j+1] <- pitval/(Tlen-1)
+  PIT[2,j+1] <- PIT[1,j+1]-PIT[1,j]
+}
+
+
+PIT.freq= as.vector(rep(((1:nobins)-0.5)/nobins, PIT[2,2:(nobins+1)]*1000))
+PIT.hist <- hist(PIT.freq, plot=FALSE, breaks=nobins)
+PIT.hist$counts <- PIT.hist$counts/1000
+plot(PIT.hist, freq=TRUE, main="PIT histogram", ylab="PIT histogram", xlab="u", col="gray")
+
+#Problem 9
+library(tscount)
+campyfit_pois <- tsglm(campy, model=list(past_obs=c(1,52)), link="log", distr="poisson")
+summary(campyfit_pois)
+
+#Problem 10
+campy_until_2017 <- window(campy, end=c(2017,26))
+campy_from_2017 <- window(campy, start=c(2017,51), end = end(campy))
+campyfit_pois_17 <- tsglm(campy_until_2017, 
+                          model=list(past_obs=c(1,13)), 
+                          link="log", distr="poisson")
+summary(campyfit_pois_17)

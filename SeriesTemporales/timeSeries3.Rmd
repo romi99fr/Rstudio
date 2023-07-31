@@ -1,0 +1,101 @@
+---
+title: "timeSeries3"
+author: "Joan-Joel"
+date: "2023-02-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Problema 1
+path.data <- "./series temporales/"
+path.data <- path.data.0
+nm <- names(read.csv2(paste0(path.data,"INE_IPC.csv"), skip=6, header=TRUE, nrows=1))
+
+yEnd <- min(grep(".3",nm,fixed = TRUE))-1
+vEnd <- yEnd + 195
+end <- min(grep(".1",nm,fixed = TRUE))-1
+nm <- nm[end:2]
+numYear <- as.numeric(substr(nm,start=2,stop=5))
+numMonth <- as.numeric(substr(nm,start=7,stop=8))
+IPC <- as.numeric(unlist(t(read.csv2(paste0(path.data,"INE_IPC.csv"), skip=6, sep = ";")[1:13,end:2])))
+inflation <- 100*diff(IPC,lag=12)/lag(IPC,k=-12)
+IPC.d1.d12 <- diff( diff(IPC,lag=12), lag=1)
+
+#Problema 2
+IPC.ts <- ts(IPC, frequency = 12, start=c(numYear[1],numMonth[1]), end=c(2018,3))
+inflation.ts <- ts(inflation, frequency = 12, start=c(numYear[1],numMonth[1]), end=c(2018,3))
+plot(ts.union(IPC.ts, inflation.ts))
+
+#Problema 3
+infl.d1 <- diff(inflation, lag=12)
+IPC.d1.d12 <- diff( diff(IPC,lag=12), lag=1)
+infl.d1
+IPC.d1.d12
+
+#Problema 4
+IPC.tr <- window(IPC.ts,start=c(2002,1), end=c(2016,12))
+IPC.te = window(IPC.ts,start=c(2017,1), end=c(2018,3))
+IPC.tr.d1.d12<- diff( diff(IPC,lag=12), lag=1)
+IPC.tr.d1.d12
+plot(IPC.tr.d1.d12, type = 'l')
+acf(IPC.tr.d1.d12)
+pacf(IPC.tr.d1.d12)
+
+#Problema 5
+#a
+library(forecast)
+model1 <- Arima(IPC.tr.d1.d12,order=c(1,0,1))
+model2 <- Arima(IPC.tr.d1.d12,order=c(0,1,1))
+model1
+model2
+plot(model1$residuals,main=paste("Var=",round(var(model1$residuals),4)))
+plot(model2$residuals,main=paste("Var=",round(var(model2$residuals),4)))
+
+plot(acf(model1$residuals))
+plot(acf(model2$residuals))
+plot(pacf(model1$residuals))
+plot(pacf(model2$residuals))
+
+#b
+IPC.tr.ts.d1.d12 <- ts(IPC.tr.d1.d12, frequency = 12, start=c(numYear[1],numMonth[1]), end=c(2018,3))
+best.arima.model <- auto.arima(IPC.tr.ts.d1.d12)
+plot(best.arima.model$residuals,main=paste("Var=",round(var(best.arima.model$residuals),4)))
+plot(acf(best.arima.model$residuals))
+plot(pacf(best.arima.model$residuals))
+best.arima.model
+
+#c
+final.aic <- Inf
+final.order <- c(0,0,0)
+for (i in 0:4) for (j in 0:4) {
+  current.aic <- AIC(arima(x, order=c(i, 0, j)))
+  if (current.aic < final.aic) {
+    final.aic <- current.aic
+    final.order <- c(i, 0, j)
+    final.arma <- arima(x, order=final.order)
+  }
+}
+final.order
+final.arma
+
+#Problema 6
+IPC.tr.ts <- ts(IPC.tr, frequency = 12, start=c(numYear[1],numMonth[1]), end=c(2018,3))
+best.arima.model <- auto.arima(IPC.tr.ts)
+plot(best.arima.model$residuals,main=paste("Var=",round(var(best.arima.model$residuals),4)))
+plot(acf(best.arima.model$residuals))
+plot(pacf(best.arima.model$residuals))
+best.arima.model
+
+#Problema 7
+library(ggplot2)
+plot(forecast(best.arima.model))
+autoplot(forecast(best.arima.model))
+
+#Problema 8
+library(ggplot2)
+plot(forecast(best.arima.model))
+autoplot(forecast(best.arima.model))
+

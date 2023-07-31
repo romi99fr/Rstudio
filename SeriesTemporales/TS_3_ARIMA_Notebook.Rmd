@@ -1,0 +1,848 @@
+---
+title: "Time Series Anlaysis"
+subtitle: " 3.  ARIMA models"
+author: "Pedro Delicado. Dept. d'Estadistica i Investigacio Operativa, UPC"
+date: "January 25th, 2023"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE) # echo=FALSE to omit code
+path.data.0 <- "./series temporales/" #To be replaced by "Time_Series_Datasets/" or the appropriate path directory
+```
+
+
+# ARMA models for stationary time series
+
+
+***
+
+## Time Series as Stochastic Processes
+
+<!--- Reading the same time series as in the first session--->
+```{r, reading}
+path.data <- paste0(path.data.0,"Penya_2010_AnSerTemp/")
+
+# Leguas diarias recorridas por la carabela de Cristobal Colon en su viaje 
+# desde la Isla de la Gomera (Canarias) hasta 
+# la isla de San Salvador en las Antillas (America) en 1492
+colon <- read.table(paste0(path.data,"colon.dat"))
+colon.ts <- ts(colon[,2])
+
+# Stock Market Madrid. Index.
+# Then Returns are defined as the difference of the Index time series.
+Stock.Exch <- read.table(paste0(path.data,"bolsamundo.dat"))
+cities <- c("Paris", "Francfort", "Milan", "Londres", 
+            "New York", "Tokio", "Madrid")
+names(Stock.Exch) <- c("Date",cities)
+year <- Stock.Exch$Date%/%100
+month <- Stock.Exch$Date%%100
+Stock.Exch.ts <- ts(Stock.Exch, start=c(year[1], month[1]), frequency = 12)
+
+# Spanish population aged 16 years old or more
+PopSpain16 <- read.table(paste0(path.data,"pobmay16.dat"))
+names(PopSpain16) <- c("Qarter", "Spanish popul. >16")
+year <- PopSpain16[,1]%/%100
+quarter <- PopSpain16[,1]%%100
+PopSpain16.ts <- ts(PopSpain16[,2], start=c(year[1], quarter[1]), frequency = 4)
+
+# Number of live births in Spain (yearly)
+live.births <- read.table(paste0(path.data,"nacidos.dat"))
+year <- live.births[,1]
+live.births.ts <- ts(live.births[,2],start=year[1])
+
+# Sunspots from 1700 to 1994
+Sunspots.ts <- ts(read.table(paste0(path.data,"sunpot.dat")),start=1700)
+
+# Temperatures (Celsius degrees) in Santiago de Compostela, from January 1997 to December 2001
+TempSC.ts <- ts(read.table(paste0(path.data,"tempsantiago.dat")),start=c(1997,1),frequency = 12)
+
+# Gasoline compsumption in Spain from January 1945 to December 1999
+Gasoline <- read.table(paste0(path.data,"gasolauto.dat"))
+names(Gasoline) <- c("Date", "Gasoline")
+year <- Gasoline$Date%/%100
+month <- Gasoline$Date%%100
+Gasoline.ts <- ts(Gasoline[,2], start=c(year[1], month[1]), frequency = 12)
+
+# Airline data, RENFE passengers
+# path.data <- "../_Data_sets/Penya_2010_AnSerTemp/"
+airlines <- as.matrix(read.table(paste0(path.data,"airline.dat")))
+airlines.ts <- ts(as.numeric(t(airlines)),start=c(1949,01),frequency = 12)
+
+renfe <- as.matrix(read.table(paste0(path.data,"prenfe.dat")))
+renfe.ts <- ts(as.numeric(t(renfe)),start=c(1971,01),frequency = 12)
+
+path.data <- path.data.0
+RegSocSec <- read.csv2(paste0(path.data,"AfiliadosSegSoc.csv"),header=TRUE)
+RegSocSec.ts <- ts(RegSocSec[,2],frequency=12, start=c(2001,01))
+
+#path.data <- "../_Data_sets/"
+nm <- names(read.csv2(paste0(path.data,"INE_IPI.csv"),
+                      skip=6, header=TRUE, nrows=1))
+end <- min(grep(".1",nm,fixed = TRUE))-1
+nm <- nm[end:2]
+
+IPI <- as.numeric( 
+  t(read.csv2(paste0(path.data,"INE_IPI.csv"), skip=8,
+              dec = "." , header = FALSE,
+              encoding = "UTF-8", row.names = 1, 
+              nrows=1)[1,(end-1):1])
+)
+year <- as.numeric(substr(nm,start=2,stop=5))
+month <- as.numeric(substr(nm,start=7,stop=8))
+tt <- year + month/12
+
+IPI.ts <- ts(IPI, frequency = 12, start=c(year[1],month[1]))
+
+IPIca <- read.csv2(paste0(path.data,"INE_IPI.csv"), skip=7,
+              dec = "." , header = FALSE, as.is=TRUE,
+              encoding = "UTF-8")
+IPIca0 <- IPIca
+
+# "Para Comunidades Autonomas no se dispone de datos anteriores al 2002"
+
+yca <- year[year>=2002]
+mca <- month[year>=2002]
+ttca <- yca + mca/12
+nca <- length(yca)
+
+nr <- dim(IPIca)[1]-3 # the last three rows in the file are text
+# nr is 144, nr/8 is 18 (1 Total + 17 ccaa)
+
+ccaa <- IPIca[seq(1,nr,by=8),1]
+#ca <- substr(ccaa,start=4,stop=100)
+#ca[1] <- ccaa[1]
+ca <- c("Total Nacional", "Andalucia", "Aragon", "Asturias", "Balears", "Canarias", "Cantabria", "Cast-Leon", "Cast-La Mancha", "Catalunya", "Com.Valenciana", "Extremadura", "Galicia", "Madrid", "Murcia", "Navarra", "Pais Vasco", "La Rioja")
+
+IPIca <- t(IPIca0[seq(2,nr,by=8),(nca+1):2])
+colnames(IPIca) <- ca
+IPIca.ts <- ts(IPIca, frequency = 12, start=c(yca[1],mca[1]))
+
+path.data <- paste0(path.data.0,"Bike-Sharing-Dataset/")
+day <- read.csv(paste0(path.data,"day.csv"),as.is=TRUE)
+hour <- read.csv(paste0(path.data,"hour.csv"),as.is=TRUE)
+```
+<!--- End of Reading the same time series as in the first session--->
+
+- **Stochastic process:** An arbitrary collection of random variables, defined from the same random experiment:
+\[
+\chi=\{X_\tau: \tau \in \mathcal{I}\} 
+\]
+where $\mathcal{I}$ is an arbitrary set: 
+    - finite, as $\{1,2,3\}$ (in this case $\chi$ is a 3-dimensional random variable), 
+    - infinite numerable, as $\mathbb{N}$ or $\mathbb{Z}$,  
+    - infinite non-numerable, as $[0,1]$ or $\mathbb{R}$. 
+
+***
+- Consider the random process $\chi$ indexed by $t\in \mathbb{Z}$
+\[
+\ldots, X_{-1}, X_0, X_1,\ldots,X_T, X_{T+1}, \ldots 
+\]
+- We consider that the time series 
+\[
+X_1,\ldots,X_T
+\] 
+is just a finite contiguous piece of the whole stochastic process. 
+
+## Wold's Representation Theorem (1938)
+
+Any covariance-stationary stochastic process 
+$\{X_t:t\in \mathbb{Z}\}$ can be written as the sum of two parts, one deterministic and one stochastic, that is,
+\[
+X_t = D(t) + Y_t, \text{ for all } t \in \mathbb{Z},
+\]
+where $D(t)$ is a deterministic function (for example, $D(t)=\mu$, $D(t)=\beta_0 + \beta_1 t$, or  $D(t)=\mu + \sin(2\pi t/12)$) and $Y_t$ is a *linear stationary process* that can be written as
+\[
+Y_t=w_t + \theta_1 w_{t-1} + \theta_2 w_{t-2} + \cdots =
+w_t + \sum_{k=1}^\infty \theta_k w_{t-k}, 
+\]
+with $\{w_t: t\in \mathbb{Z}\}$ a white noise process: $E(w_t)=0$,  $\text{Var}(w_t)=\sigma^2$, $\text{Cov}(w_t,w_s)=0$, for all $t$, $s$, $t\ne s$.
+
+## Lag ($L$) and difference ($\Delta$) operators. 
+
+- The **lag operator** is a function that when applied to 
+an infinite time series $\{X_t:t\in \mathbb{Z}\}$ returns the lagged series $\{X_{t-1}:t\in \mathbb{Z}\}$.
+- We denote this operator by $L$. So, 
+\[
+L(\{X_t:t\in \mathbb{Z}\}) = \{X_{t-1}:t\in \mathbb{Z}\}.
+\]
+- We ususally write $L X_t = X_{t-1}$.
+- Larger order lag operators: 
+    - $L^2 X_t = L(L X_t)=L(X_{t-1})=X_{t-2}$.
+    - $L^k X_k = X_{t-k}$.
+
+*** 
+
+- The **difference operator** is a function that when applied to 
+an infinite time series $\{X_t:t\in \mathbb{Z}\}$ returns the differenced series $\{X_t-X_{t-1}:t\in \mathbb{Z}\}$.
+- We denote this operator by $\Delta$ and write 
+\[
+\Delta X_t=X_t-X_{t-1} = X_t - L X_t \equiv (1-L) X_t.
+\]
+- So $\Delta=1-L$. Observe that 
+\[
+\Delta^2 X_t = (1-L)^2 X_t = (1-L) ((1-L) X_t) =
+\]
+\[ 
+(1-L)(X_t - X_{t-1})= 
+(X_t - X_{t-1}) - (X_{t-1} - X_{t-2}) = 
+\]
+\[
+X_t - 2X_{t-1} + X_{t-2} =
+(1-2L+L^2) X_t 
+\]
+- Then $(1-L)^2=(1-2L+L^2)$. That is, we can operate with linear combinations of the lag operator $L$ as we operate with polynomials.  
+
+## Polynomials in the lag operator
+
+- $\Phi(L) = 1 - \phi_1L - \phi_2 L^2 - \cdots - \phi_p L^p$ 
+- $\Phi(L) X_t = X_t - \phi_1 X_{t-1} - \phi_2 X_{t-2} - \cdots - \phi_p X_{t-p}$ 
+- We work with polynomials in the lag operator $\Phi(L)$ as we do with polynomials in real (or complex) argument $z$:
+$\Phi(z) = 1 - \phi_1 z - \phi_2 z^2 - \cdots - \phi_p z^p$.
+- For instance, for $|\phi|<1$ 
+\[
+(1-\phi L)^{-1} = \frac{1}{1-\phi L}= 1 + \phi L + \phi^2 L^2+ \cdots 
+= 
+\sum_{k=0}^\infty \phi^k L^k 
+\]
+
+## Wold's Representation Theorem with the lag operator
+- $X_t = D(t) + Y_t$ with  $Y_t = \left(1 + \sum_{k=1}^\infty \theta_k L^k\right) w_t$.
+- If $\sum_{k=1}^\infty \theta_k^2<\infty$ then $Y_t$ is stationary in covariance.
+- This model for $Y_t$ has infinite many parameters:
+$\sigma^2, \{\theta_1,\theta_2, \ldots \}$.
+- With a finite number of observations $X_1,\ldots, X_T$ it is not possible to estimate an infinite number of parameters.
+- We will limit ourselves to
+    - a finite number of parameters $\theta_1,\theta_2,\ldots,\theta_q$, or
+    - an infinite number of parameters following a regular pattern that only depends on a finite number of unknown constants. For instance, for all $k\ge 1$ let $\theta_k=\phi^k$ for $|\phi|<1$.
+
+## MA($q$): Moving Averages models
+
+- Let $\Psi_q(z)=1+\psi_1 z +\cdots+\psi_q z^q$.
+- MA($q$) model:
+\[
+X_t = \Psi_q(L) w_t = w_t+\psi_1 w_{t-1} +\cdots+\psi_q w_{t-q}.
+\]
+- $X_t$ is always stationary:
+    - $E(X_t)=0$, $\text{Var}(X_t)=\left(1+\psi_1^2+\cdots+\psi_q^2\right) \sigma^2$. 
+    - For $k>q$, $\gamma_k=\text{Cov}(X_t,X_{t-k})=0$.
+    - For $k=1,\ldots,q$, $\gamma_k=\sum_{i=0}^q \psi_i\psi_{i+k}$,
+where $\psi_0=1$ and $\psi_j=0$ for $j\ge q+1$.
+- **Note:** In the Wold's Representation Theorem $Y_t$ is a MA($\infty$).
+
+## **Example:** MA($1$), $X_t=w_t+\psi_1 w_{t-1}$, $\text{Var}(w_t)=\sigma^2$.
+
+  - $E(X_t)=0$, $\gamma_0=\text{Var}(X_t)=\left(1+\psi_1^2\right) \sigma^2$. 
+  - Self-covariances:
+  \[\gamma_1=\text{Cov}(X_t,X_{t-1})=
+    \text{Cov}(w_t+\psi_1 w_{t-1},w_{t-1}+\psi_1 w_{t-2})=
+    \]
+    \[
+     \text{Cov}(\psi_1 w_{t-1},w_{t-1})=\psi_1\sigma^2.
+     \]
+  \[\gamma_2=\text{Cov}(X_t,X_{t-2})=
+    \text{Cov}(w_t+\psi_1 w_{t-1},w_{t-2}+\psi_1 w_{t-3})=0.
+    \]
+   \[\gamma_k=0, \text{ for } k\ge 2.\]
+  - Self correlations:
+    \[\rho_1=\psi_1/(1+\psi^2).\]
+    \[\rho_k=0 \text{ for } k\ge 2.\] 
+
+## AR($p$): Autorregressive models
+- AR(1): $X_t=\phi X_{t-1} + w_t \Leftrightarrow (1-\phi L) X_t = w_t \Leftrightarrow$
+\[
+ X_t = \frac{1}{(1-\phi L)}w_t 
+= \left( \sum_{k=0}^\infty \phi^k L^k \right) w_t
+= \sum_{k=0}^\infty \phi^k w_{t-k}
+\Leftrightarrow 
+\theta_k = \phi^k , k\ge 1.
+\]
+- More in general, let
+\[
+\Phi_p(z)=1-\phi_1 z -\cdots-\phi_p z^p=\prod_{j=1}^p(1-\lambda_j z), 
+\]
+where $\lambda_1,\ldots,\lambda_p$ are the inverse of the $p$ (possibly complex) roots of the polynomial $\Phi_p(z)$. 
+
+***
+
+- Assume that the roots $z_j=1/\lambda_j$, $j=1,\ldots, p$, of the polynomial $\Phi_p(z)$ have modulus larger than 1:
+\[
+|z_j|>1 \Leftrightarrow |\lambda_j|<1.
+\]
+- Then 
+\[
+\frac{1}{\Phi_p(z)} = \prod_{j=1}^p\frac{1}{1-\lambda_j z}
+=\sum_{j=1}^p \frac{A_j}{1-\lambda_j z}
+\]
+\[
+=\sum_{j=1}^p A_j \sum_{k=0}^\infty \lambda_j^k z^k
+=\sum_{k=0}^\infty \left(\sum_{j=1}^p A_j \lambda_j^k\right) z^k
+\]
+
+***
+
+### AR($p$) model:
+\[
+X_t = \frac{1}{\Phi_p(L)} w_t \Leftrightarrow 
+\Phi(L) X_t = w_t  \Leftrightarrow
+\]
+\[
+X_t - \phi_1 X_{t-1} - \ldots - \phi_p X_{t-p} = w_t \Leftrightarrow
+\]
+\[
+X_t = \phi_1 X_{t-1} + \ldots + \phi_p X_{t-p} + w_t.
+\]
+
+## ARMA($p$,$q$) model:
+\[
+X_t=\frac{\Psi_q(L)}{\Phi_p(L)} w_t \Leftrightarrow 
+\Phi_p(L)X_t=\Psi_q(L) w_t \Leftrightarrow 
+\]
+\[
+X_t\!-\!\phi_1 X_{t-1}\!-\!\ldots\!-\!\phi_p X_{t-p}\!=\! 
+w_t\!+\!\psi_1 w_{t-1}\!+\!\cdots\!+\!\psi_q w_{t-q} \Leftrightarrow
+\]
+\[
+X_t\!=\!\phi_1 X_{t-1}\!+\!\ldots\!+\!\phi_p X_{t-p}\!+\!
+w_t\!+\!\psi_1 w_{t-1}\!+\!\cdots\!+\!\psi_q w_{t-q}.
+\]
+
+***
+
+### ARMA($p$,$q$) model: $\Phi_p(L)X_t=\Psi_q(L) w_t$.
+
+- If all roots of $\Phi_p(z)$ are *outside the unit circle* then $1/\Phi_p(z)$ is well defined and the process $X_t$ is **stationary**, or $MA(\infty)$.
+- If all roots of $\Psi_q(z)$ are *outside the unit circle* then $1/\Psi_q(z)$ is well defined and the process $X_t$ is **invertible**, or $AR(\infty)$: 
+\[
+\frac{\Phi_p(L)}{\Psi_q(L)} X_t=w_t \Leftrightarrow 
+(1-\sum_{j=1}^\infty \delta_j L^j) X_t = w_t
+\Leftrightarrow 
+\]
+\[
+X_t = \sum_{j=1}^\infty \delta_j X_{t-j} + w_t.
+\]
+
+## Identification of ARMA($p$,$q$) models
+
+- Let $X_t$ be a stationary and invertible ARMA($p$,$q$) process for some values $p$ and $q$.
+- How $p$ and $q$ are *identified*?
+- Two main tools:
+    - The Autocorrelation Function, 
+    $\text{ACF}(k)=\rho_k=\text{Corr}(X_t, X_{t-k})$, $k\ge 1$. 
+    - The Partial Autocorrelation Function, $\text{PACF}(k)=\rho^p_k$, defined as the
+    *correlation between $X_t$ and $X_{t-k}$, once the effects of $X_{t-1},\ldots,X_{t-k+1}$ have been removed from both $X_t$ and $X_{t-k}$*.
+    
+***
+
+### Computing $\text{PACF}(k)$:
+
+- Do the multiple linear regression with response $X_t$ and predictors $X_{t-1},\ldots,X_{t-k+1}$.
+- Do the multiple linear regression with response $X_{t-k}$ and predictors $X_{t-1},\ldots,X_{t-k+1}$.
+- $\rho^p_k$ is the correlation coefficient between the residuals of both fitted regressions.
+
+***
+
+### AR($p$), MA($q$), ARMA($p$,$q$), ACF and PACF.
+
+| Model       | ACF($k$)                           | PACF($k$)                         |
+|-------------|------------------------------------|-----------------------------------|
+|AR($p$)      |Decreasing as $z^k$                 | $0$ for $k>p$                     |
+|MA($q$)      | $0$ for $k>q$                      | Decreasing as $z^k$               |
+|ARMA($p$,$q$)| First $q$ non-null, then <br> decreasing as $z^{k-q}$ | First $p$ non-null, then  <br> decreasing as $z^{k-p}$ |
+
+
+
+(assuming $|z|<1$)
+
+***
+
+```{r}
+max.lag <- 10
+ar<-list(c(.8),c(-.6))
+ma<-list(numeric(),numeric())
+op<-par(mfrow=c(2,length(ar)))
+for (i in (1:length(ar))){
+  plot(0:max.lag,ARMAacf(ar=ar[[i]], ma=ma[[i]], lag.max=max.lag), ylab="ACF", xlab="lag",
+       main=paste("AR:",paste(ar[[i]],collapse = ", "),"; MA:",paste(ma[[i]],collapse = ", ")), type="h", lwd=3, ylim=c(-1,1), xlim=c(0,max.lag))
+  abline(h=0,col=8)
+}
+for (i in (1:length(ar))){
+  plot(1:max.lag,ARMAacf(pacf=TRUE, ar=ar[[i]], ma=ma[[i]], lag.max=max.lag), ylab="PACF", xlab="lag",, main=paste("AR:",paste(ar[[i]],collapse = ", "),"; MA:",paste(ma[[i]],collapse = ", ")), type="h", lwd=3, ylim=c(-1,1), xlim=c(0,max.lag))
+  abline(h=0,col=8)
+}
+```
+
+***
+
+```{r}
+max.lag <- 10
+ar<-list(c(.4,.2),c(-.4,.2), c(.4,-.2),c(-.4,-.2))
+ma<-list(numeric(),numeric(),numeric(),numeric())
+op<-par(mfrow=c(2,length(ar)))
+for (i in (1:length(ar))){
+  plot(0:max.lag,ARMAacf(ar=ar[[i]], ma=ma[[i]], lag.max=max.lag), ylab="ACF", xlab="lag",
+       main=paste("AR:",paste(ar[[i]],collapse = ", "),"; MA:",paste(ma[[i]],collapse = ", ")), type="h", lwd=3, ylim=c(-1,1), xlim=c(0,max.lag))
+  abline(h=0,col=8)
+}
+for (i in (1:length(ar))){
+  plot(1:max.lag,ARMAacf(pacf=TRUE, ar=ar[[i]], ma=ma[[i]], lag.max=max.lag), ylab="PACF", xlab="lag",, main=paste("AR:",paste(ar[[i]],collapse = ", "),"; MA:",paste(ma[[i]],collapse = ", ")), type="h", lwd=3, ylim=c(-1,1), xlim=c(0,max.lag))
+  abline(h=0,col=8)
+}
+```
+
+***
+
+```{r}
+max.lag <- 10
+ar<-list(numeric(),numeric())
+ma<-list(c(.5),c(-.5))
+op<-par(mfrow=c(2,length(ar)))
+for (i in (1:length(ar))){
+  plot(0:max.lag,ARMAacf(ar=ar[[i]], ma=ma[[i]], lag.max=max.lag), ylab="ACF", xlab="lag",
+       main=paste("AR:",paste(ar[[i]],collapse = ", "),"; MA:",paste(ma[[i]],collapse = ", ")), type="h", lwd=3, ylim=c(-1,1), xlim=c(0,max.lag))
+  abline(h=0,col=8)
+}
+for (i in (1:length(ar))){
+  plot(1:max.lag,ARMAacf(pacf=TRUE, ar=ar[[i]], ma=ma[[i]], lag.max=max.lag), ylab="PACF", xlab="lag",, main=paste("AR:",paste(ar[[i]],collapse = ", "),"; MA:",paste(ma[[i]],collapse = ", ")), type="h", lwd=3, ylim=c(-1,1), xlim=c(0,max.lag))
+  abline(h=0,col=8)
+}
+```
+
+***
+
+
+```{r}
+max.lag <- 10
+ar<-list(numeric(),numeric(),numeric(),numeric())
+ma<-list(c(.7,.4),c(-.7,.4), c(.7,-.4),c(-.7,-.4))
+op<-par(mfrow=c(2,length(ar)))
+for (i in (1:length(ar))){
+  plot(0:max.lag,ARMAacf(ar=ar[[i]], ma=ma[[i]], lag.max=max.lag), ylab="ACF", xlab="lag",
+       main=paste("AR:",paste(ar[[i]],collapse = ", "),"; MA:",paste(ma[[i]],collapse = ", ")), type="h", lwd=3, ylim=c(-1,1), xlim=c(0,max.lag))
+  abline(h=0,col=8)
+}
+for (i in (1:length(ar))){
+  plot(1:max.lag,ARMAacf(pacf=TRUE, ar=ar[[i]], ma=ma[[i]], lag.max=max.lag), ylab="PACF", xlab="lag",, main=paste("AR:",paste(ar[[i]],collapse = ", "),"; MA:",paste(ma[[i]],collapse = ", ")), type="h", lwd=3, ylim=c(-1,1), xlim=c(0,max.lag))
+  abline(h=0,col=8)
+}
+```
+
+***
+
+
+```{r}
+max.lag <- 10
+ar<-list(c(.7),c(.7), .4, c(-.7),c(-.7))
+ma<-list(c(.4),c(-.4), -.7, c(.4),c(-.4))
+op<-par(mfrow=c(2,length(ar)))
+for (i in (1:length(ar))){
+  plot(0:max.lag,ARMAacf(ar=ar[[i]], ma=ma[[i]], lag.max=max.lag), ylab="ACF", xlab="lag",
+       main=paste("AR:",paste(ar[[i]],collapse = ", "),"; MA:",paste(ma[[i]],collapse = ", ")), type="h", lwd=3, ylim=c(-1,1), xlim=c(0,max.lag))
+  abline(h=0,col=8)
+}
+for (i in (1:length(ar))){
+  plot(1:max.lag,ARMAacf(pacf=TRUE, ar=ar[[i]], ma=ma[[i]], lag.max=max.lag), ylab="PACF", xlab="lag",, main=paste("AR:",paste(ar[[i]],collapse = ", "),"; MA:",paste(ma[[i]],collapse = ", ")), type="h", lwd=3, ylim=c(-1,1), xlim=c(0,max.lag))
+  abline(h=0,col=8)
+}
+```
+
+
+# Forecasting with ARMA models
+
+***
+
+### Prediction in the ARMA(1,1) model
+
+- **ARMA(1,1)**: $X_t=\phi X_{t-1} + w_t + \psi w_{t-1}$.
+- Assume that parameters $\phi$, $\psi$, $\sigma^2=\text{Var}(w_t)$ are known.
+- Assume that $X_1,\ldots,X_T$ have been observed, and that $w_1=0$.
+- Then, 
+    - $X_{2|1}=E(X_2|X_1,w_1)=\phi X_1$, $\hat{w}_2=X_2-X_{2|1}$.
+- For $3 \le t\le T$,
+    - $X_{t|t-1}=E(X_t|X_{t-1},\hat{w}_{t-1})=\phi X_{t-1}+\psi \hat{w}_{t-1}$,
+    - $\hat{w}_{t}=E(w_t|X_s, s=1,\ldots,t)=X_t-X_{t|t-1}$.
+- For $t=T+1$, observe that $\hat{w}_{T+1}= E(w_{T+1}|X_t, t=1,\ldots,T)=E(w_{T+1})=0$. 
+Then
+\[
+X_{T+1|T}=E(X_{T+1}|X_{t},t=1,\ldots,T)=
+\]
+\[
+E(\phi X_T + w_{T+1} + \psi w_{T}|X_{t},t=1,\ldots,T)=
+\phi X_{T}+\psi \hat{w}_{T}.
+\]
+
+*** 
+-  For $t=T+2$, observe that $\hat{w}_{T+2}= E(w_{T+2}|X_t, t=1,\ldots,T)=E(w_{T+2})=0$. 
+Then 
+\[
+X_{T+2|T}=E(X_{T+2}|X_{t},t=1,\ldots,T)=
+\]
+\[
+E(\phi X_{T+1} + w_{T+2} + \psi w_{T+1}|X_{t},t=1,\ldots,T)=
+\phi X_{T+1|T}.
+\]
+- For $k\ge 2$, $\hat{w}_{T+k}=0$ and 
+\[
+X_{T+k|T}=E(X_{T+k}|X_{t},t=1,\ldots,T)=
+\]
+\[
+E(\phi X_{T+k-1} + w_{T+k} + \psi w_{T+k-1}|X_{t},t=1,\ldots,T)=
+\]
+\[
+\phi X_{T+k-1|T}= \phi^2 X_{T+k-2|T}=\cdots=\phi^{k-1} X_{T+1|T}.
+\]
+- In summary: 
+    - ${X}_{T+1|T} = \phi X_{T}+ \psi \hat{w}_{T}$,
+    - ${X}_{T+k|T} = \phi^{k-1} {X}_{T+1|T}$.
+
+***
+
+### Estimation in ARMA(1,1)
+
+- **ARMA(1,1)**: $X_t=\phi X_{t-1} + w_t + \psi w_{t-1}$.
+- Parameters: $\phi$, $\psi$, $\sigma^2=\text{Var}(w_t)$.
+- Conditional estimation: $X_1$ is considered as a known constant (not a random variable), and $w_1=0$.
+- For any $\phi$ and $\psi$:
+    - $X_{2|1}=E(X_2|X_1,w_1)=\phi X_1$, $\hat{w}_2=X_2-X_{2|1}$.
+    - $X_{t|t-1}=E(X_t|X_{t-1},\hat{w}_{t-1})=\phi X_{t-1}+\psi \hat{w}_{t-1}$, $\hat{w}_{t}=X_t-X_{t|t-1}$.
+    - $\text{SSE}(\phi,\psi)=\sum_{t=2}^T\hat{w}_{t}^2.$
+- $(\hat{\phi},\hat{\psi})=\arg\min_{\phi,\psi} \text{SSE}(\phi,\psi)$.
+- $\hat{\sigma}^2=\text{SSE}(\hat{\phi},\hat{\psi})/(T-1)$.
+
+***
+
+### Prediction in the ARMA(1,1) model with estimated parameters
+
+
+- With known parameters, we have seen that 
+    - ${X}_{T+1|T} = \phi X_{T}+ \psi \hat{w}_{T}$,
+    - ${X}_{T+k|T} = \phi^{k-1} {X}_{T+1|T}$.
+- With estimated parameters:
+    - $\hat{X}_{T+1|T} = \hat{\phi} X_{T}+ \hat{\psi} \hat{w}_{T}$,
+    - $\hat{X}_{T+k|T} = \hat{\phi}^{k-1} \hat{X}_{T+1|T}$.
+- **Predictions variance:** They are computed from the $\text{MA}(\infty)$ expression of the model (see also Section 8.4 in Peña, 2010):
+\[
+X_t=w_t + \sum_{k=1}^{\infty} \psi_k w_{t-k} 
+\Rightarrow 
+\text{Var}(X_t)= \sigma^2 \left( 1 + \sum_{k=1}^{\infty} \psi_k^2 \right) 
+\]
+\[
+\Rightarrow 
+\widehat{\text{Var}}(X_t)= \hat{\sigma}^2 
+\left( 1 + \sum_{k=1}^{\infty} \hat{\psi}_k^2 \right). 
+\]
+
+***
+
+## Prediction for a generic ARMA($p$,$q$) model
+
+$X_t\!=\!\phi_1 X_{t-1}\!+\!\ldots\!+\!\phi_p X_{t-p}\!+\!
+w_t\!-\!\psi_1 w_{t-1}\!-\!\cdots\!-\!\psi_q w_{t-q}$
+
+Assume that the parameters $\phi_i$, $\psi_j$ are known, and that 
+$X_1,\ldots,X_T$ have been observed. Then
+\[
+X_{T+k|T}\!=\!\phi_1 X_{T+k-1|T}\!+\!\ldots\!+\!\phi_p X_{T+k-p|T}+\!
+\]
+\[
+w_{T+k|T}\!+\!\psi_1 w_{T+k-1|T}\!+\!\cdots\!+\!\psi_q w_{T+k-q|T},
+\]
+where 
+
+- $X_{T+k-i|T}=X_t$ when $t=T+k-i\le T$, 
+- $w_{T+k-i|T}=0$ when $T+k-i> T$, 
+- and, for $t=T+k-i\le T$, $w_{T+k-i|T}=\hat{w}_t$ computed recursively for $t\le T$ as $\hat{w}_t=X_t-\hat{X}_t$, with
+\[
+\hat{X}_t = \!\phi_1 X_{t-1}\!+\!\ldots\!+\!\phi_p X_{t-p}\!+\!
+0\!+\!\psi_1 \hat{w}_{t-1}\!+\!\cdots\!+\!\psi_q \hat{w}_{t-q}.
+\]
+Parameter estimation is done as we have seen for ARMA(1,1).
+
+# ARIMA models for general time series
+
+***
+
+We have seen so far:
+
+- If a time series $X_t$ (observed at $t=1,\ldots,T$) is stationary, then ARMA models (including pure AR and MA models) are a useful tool for modeling it and forecasting future values.
+- If $X_t$ is not stationary, we decompose it in its structural components, $X_t=\mu_t+S_t+a_t$, where $a_t$ stationary. 
+    - We have seen how to forecast $\mu_t$ and $S_t$.
+    - ARMA models can be used to model and forecast $a_t$.
+- Nevertheless, decomposition of $X_t$ is not the only way to transform $X_t$ into a stationary time series.
+- **Differentiating** $X_t$ is a useful alternative.
+
+***
+
+```{r,fig.asp=.4}
+plot(IPI.ts,main=paste("Var=",round(var(IPI.ts),4)))
+```
+
+```{r,fig.asp=0.4}
+op<-par(mfrow=c(1,2))
+acf(IPI.ts)
+pacf(IPI.ts)
+par(op)
+```    
+
+***
+
+```{r,fig.asp=.4}
+d1.IPI <- diff(IPI.ts, lag = 1)
+plot(d1.IPI,main=paste("Var=",round(var(d1.IPI),4)))
+```
+
+```{r,fig.asp=0.4}
+op<-par(mfrow=c(1,2))
+acf(d1.IPI)
+pacf(d1.IPI)
+par(op)
+```    
+
+***
+
+```{r,fig.asp=.4}
+d12.IPI <- diff(IPI.ts, lag = 12)
+plot(d12.IPI,main=paste("Var=",round(var(d12.IPI),4)))
+```
+
+```{r,fig.asp=0.4}
+op<-par(mfrow=c(1,2))
+acf(d12.IPI)
+pacf(d12.IPI)
+par(op)
+```    
+
+***
+
+```{r,fig.asp=.4}
+d1.d12.IPI <- diff(diff(IPI.ts, lag = 12), lag=1)
+plot(d1.d12.IPI,main=paste("Var=",round(var(d1.d12.IPI),4)))
+```
+
+```{r,fig.asp=0.4}
+op<-par(mfrow=c(1,2))
+acf(d1.d12.IPI)
+pacf(d1.d12.IPI)
+par(op)
+```    
+
+***
+
+ARMA(1,1) model for $\Delta \Delta_{12}$IPI, using function `Arima` from library `forecast`:
+
+```{r,warning=FALSE,message=FALSE}
+library(forecast)
+arma.1.1.d1.d12.IPI <- Arima(d1.d12.IPI,order=c(1,0,1))
+print(arma.1.1.d1.d12.IPI)
+```
+
+***
+
+```{r}
+plot(arma.1.1.d1.d12.IPI)
+```
+
+***
+
+```{r,fig.asp=.4}
+plot(arma.1.1.d1.d12.IPI$residuals,main=paste("Var=",round(var(arma.1.1.d1.d12.IPI$residuals),4)))
+```
+
+```{r,fig.asp=0.4}
+op<-par(mfrow=c(1,2))
+acf(arma.1.1.d1.d12.IPI$residuals)
+pacf(arma.1.1.d1.d12.IPI$residuals)
+par(op)
+```   
+
+
+## ARIMA and Seasonal ARIMA models
+
+- ARIMA: AutoRegressive Integrated Moving Averages
+- **ARIMA($p$,$d$,$q$)**: 
+$\Phi_p(L) \Delta^d X_t = \Psi_q(L) w_t$ $\Leftrightarrow$
+$(1\!-\!\phi_1 L \!-\! \cdots \!-\! \phi_p L^p)(1\!-\!L)^d X_t = 
+(1\!+\!\psi_1 L\!+\!\cdots\!+\!\psi_q L^q ) w_t$ $\Leftrightarrow$
+$(1\!-\!\delta_1 L \!-\! \cdots \!-\! \delta_{p+d} L^{p+d}) X_t = 
+(1\!+\!\psi_1 L\!+\!\cdots\!+\!\psi_q L^q ) w_t$ $\Leftrightarrow$
+$X_t = \delta_1 X_{t-1} \!+\! \cdots \!+\! \delta_{p+d} X_{t-p-d} + w_t 
+\!+\!\psi_1 w_{t-1} \!+\!\cdots\!-\!\psi_q w_{t-q}$
+- **ARIMA($p$,$d$,$q$)($P$,$D$,$Q$)**: 
+$\Phi_p(L)\Phi_P^S(L^{12}) \Delta^d\Delta_{12}^D X_t = \Psi_q(L) \Psi_Q(L^{12}) w_t$ 
+- Estimation in R:
+    - `arima` in library `stats`
+    - `Arima` in library `forecast`
+    - `auto.arima` in library `forecast`
+
+***
+
+Best ARIMA model for IPI, using function `auto.arima` from library `forecast`:
+
+```{r,warning=FALSE,message=FALSE}
+best.arima.IPI <- auto.arima(IPI.ts)
+print(best.arima.IPI)
+```
+
+***
+
+```{r}
+plot(best.arima.IPI)
+```
+
+****
+
+```{r,fig.asp=.4}
+plot(best.arima.IPI$residuals,main=paste("Var=",round(var(best.arima.IPI$residuals),4)))
+```
+
+```{r,fig.asp=0.4}
+op<-par(mfrow=c(1,2))
+acf(best.arima.IPI$residuals)
+pacf(best.arima.IPI$residuals)
+par(op)
+```  
+
+***
+
+### The Airlines Model: ARIMA(0,1,1)(0,1,1)$_{12}$
+
+```{r,fig.asp=.4}
+plot(airlines.ts)
+```
+
+```{r,fig.asp=0.4}
+op<-par(mfrow=c(1,2))
+acf(airlines.ts)
+pacf(airlines.ts)
+par(op)
+```  
+
+***
+
+```{r,fig.asp=.4}
+plot(log(airlines.ts))
+```
+
+```{r,fig.asp=0.4}
+op<-par(mfrow=c(1,2))
+acf(log(airlines.ts))
+pacf(log(airlines.ts))
+par(op)
+```  
+
+***
+
+```{r,fig.asp=.4}
+plot(diff(diff(log(airlines.ts),lag=12),lag=1))
+```
+
+```{r,fig.asp=0.4}
+op<-par(mfrow=c(1,2))
+acf(diff(diff(log(airlines.ts),lag=12),lag=1),lag.max = 36)
+pacf(diff(diff(log(airlines.ts),lag=12),lag=1),lag.max = 36)
+par(op)
+```  
+
+***
+
+**Fitting the Airlines Model**
+
+```{r,warning=FALSE, message=FALSE}
+airlines.model <- Arima(airlines.ts,order=c(0,1,1),seasonal = c(0,1,1),lambda = 0)
+print(airlines.model)
+```
+
+***
+
+```{r}
+plot(airlines.model)
+```
+
+
+***
+
+```{r,fig.asp=0.4}
+plot(airlines.model$residuals)
+```
+
+```{r,fig.asp=0.4}
+op<-par(mfrow=c(1,2))
+acf(airlines.model$residuals)
+pacf(airlines.model$residuals)
+par(op)
+```
+
+***
+
+### Best Seasonal ARIMA model for the Airlines time series
+
+```{r}
+best.airlines <- auto.arima(airlines.ts,lambda = 0)
+print(best.airlines)
+```
+
+
+
+# Forecasting with ARIMA models
+
+***
+
+## Forecasting with ARIMA models
+
+- Conceptually, forecasting with ARIMA models is similar to forecasting with ARMA models.
+- When there is no seasonal part, the basic equation is <br> 
+$X_t = \delta_1 X_{t-1} \!+\! \cdots \!+\! \delta_{p+d} X_{t-p-d} + w_t 
+\!+\!\psi_1 w_{t-1} \!+\!\cdots\!+\!\psi_q w_{t-q}$
+- Working with the seasonal part is similar.
+- Forecasting with ARIMA models in R: 
+    - Apply the function `predict` to the output objects (fitted models) of function `arima`.
+    - Apply the function `forecast` to the output objects (fitted models) of functions `Arima` or `auto.arima`.
+    - The forecasting objects can be plotted using `plot`.
+    - When using functions in library `forecast` you can plot predictions using `autoplot` (it requires library `ggplot2`).
+    
+***
+
+```{r,warning=FALSE}
+library(ggplot2)
+autoplot(forecast(airlines.model))
+```
+
+*** 
+
+```{r}
+my.arima.IPI <- Arima(IPI.ts,order=c(1,1,1),seasonal=c(0,1,0))
+autoplot(forecast(my.arima.IPI))
+```
+
+***
+
+```{r}
+autoplot(forecast(my.arima.IPI,h=48))
+```
+
+*** 
+
+```{r}
+autoplot(forecast(best.arima.IPI))
+```
+
+*** 
+
+```{r}
+autoplot(forecast(best.arima.IPI,h=48))
+```
+
+***
+
+```{r,warning=FALSE}
+HW.IPI <- HoltWinters(IPI.ts)
+autoplot(forecast(HW.IPI))
+```
+
+
+***
+
+```{r,warning=FALSE}
+autoplot(forecast(HW.IPI,h=48))
+```
